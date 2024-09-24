@@ -1,0 +1,516 @@
+<html>
+    <head>
+        <title>Robopop</title>
+    </head>
+    <body>
+        <h1>Robopop</h1>
+        <p>
+            Heater is <span data-role="heaterStatus"></span><br>
+            Temp is <span data-role="temp"></span><br>
+            Time is <span data-role="time"></span>
+        </p>
+
+        <button data-role="powerOn">Start Test</button>
+        <button data-role="powerOff">Stop Test</button>
+        <button data-role="resetTime">Reset Time</button>
+
+        <pre data-role="console">Initialise.</pre>
+
+        <script>
+
+            const loopSpeed = 100
+
+            const consoleEl = document.querySelector('[data-role="console"]')
+            const heaterStatusEl = document.querySelector('[data-role="heaterStatus"]')
+            const tempEl = document.querySelector('[data-role="temp"]')
+            const timeEl = document.querySelector('[data-role="time"]')
+            const powerOnEl = document.querySelector('[data-role="powerOn"]')
+            const powerOffEl = document.querySelector('[data-role="powerOff"]')
+            const resetTimeEl = document.querySelector('[data-role="resetTime"]')
+
+            let windowTimeout = null
+
+            let maxTemp = 300
+            let maxTime = 30 * 1000
+
+            let temp = 0
+            let time = 0
+
+            powerOnEl.addEventListener('click', function() {
+                windowTimeout = window.setInterval(loop, loopSpeed)
+            })
+
+            powerOffEl.addEventListener('click', function() {
+                window.clearTimeout(windowTimeout)
+            })
+
+            resetTimeEl.addEventListener('click', function() {
+                time = 0
+                updateDisplay()
+            })
+
+            function setHeaterStatus(isOn) {
+                heaterStatusEl.textContent = (isOn ? 'ON' : 'OFF')
+            }
+
+            function addToConsole(text) {
+                consoleEl.innerHTML = text + "\n" + consoleEl.textContent
+            }
+
+            let heaterTurnOff = false
+            let heaterCurrentlyOff = false
+            let tempThreshold = 30
+
+            let dHeatRate = 20
+            let dCoolRate = 10
+
+            function updateDisplay() {
+                heaterStatusEl.textContent = (heaterCurrentlyOff ? 'OFF' : 'ON')
+                tempEl.textContent = `${temp}C`
+                timeEl.textContent = `${time}s`
+            }
+
+            function loop() {
+                addToConsole('start loop')
+
+                // turn heater off if time is up
+                if (time > maxTime) {
+                    heaterTurnOff = true
+                } else {
+                    // turn heater on if its already off and and the temp is less than the heat threshold
+                    if (heaterCurrentlyOff && temp < (maxTemp - tempThreshold)) {
+                        heaterTurnOff = false
+                    }
+                }
+
+                // turn heater off if the temperature is greater than the cutoff
+                if (temp > maxTemp) {
+                    heaterTurnOff = true
+                }
+
+                // switch the heater state if it has changed
+                if (heaterTurnOff !== heaterCurrentlyOff) {
+                    if (heaterTurnOff) {
+                        // send off signal to relay
+                        addToConsole('heater off')
+                    } else {
+                        // send on signal to relay
+                        addToConsole('heater on')
+                    }
+                }
+
+                heaterCurrentlyOff = heaterTurnOff
+                time += loopSpeed
+
+                // simulate the heater element
+                if (heaterTurnOff) {
+                    temp = (temp < 0) ? temp : temp - dCoolRate
+                } else {
+                    temp += dHeatRate
+                }
+
+                // quit the program as we are out of time but wait a bit for safety
+                if (time > (maxTime + 1000) && heaterCurrentlyOff) {
+                    window.clearTimeout(windowTimeout)
+                }
+
+                // log
+                updateDisplay()
+            }
+
+            
+        </script>
+
+        <template>
+            #include <LiquidCrystal_I2C.h>
+
+                LiquidCrystal_I2C lcd(0x27, 20, 4);
+    
+                const int TAPER_MODE_OFF = 0;
+                const int TAPER_MODE_5M = 1;
+                const int TAPER_MODE_10M = 2;
+                const int TAPER_MODE_15M = 3;
+    
+                const int START_BUTTON_PIN = 3;
+                const int RESET_BUTTON_PIN = 4;
+                const int STOP_BUTTON_PIN = 5;
+                const int TAPER_BUTTON_PIN = 2;
+    
+                const int MAX_TIME_POT_PIN = A0;
+                const int MAX_TEMP_POT_PIN = A1;
+                const int OP_RANGE_POT_PIN = A2;
+    
+                const int TEMP_SENSOR_PIN = A3;
+    
+                const int LCD_I2C_PIN = 0;
+                const int HEATER_RELAY_PIN = 13;
+                
+                int loopDelay = 0;
+    
+                bool stopped = true;
+                bool timeExpired = false;
+                bool startButtonPressed = false;
+                bool stopButtonPressed = false;
+    
+                bool heatExceeded = false;
+    
+                int maxTimeCap = 180;
+                unsigned long exitTime = (maxTimeCap) * 30;
+                
+                int maxTemp = 0;
+                unsigned long maxTime = 0;
+                
+                int temp = 0;
+                long startTime = millis();
+                long time = 0;
+                
+                bool heaterTurnOff = false;
+                bool heaterCurrentlyOff = false;
+                int tempThreshold = 0;
+                
+                char buf[22];
+                
+                const float BETA = 3950; // should match the Beta Coefficient of the thermistor
+    
+                int taperMode = TAPER_MODE_OFF;
+                char taperModeString[3];
+    
+                void start() {
+                    reset();
+                    startButtonPressed = true;
+                    stopButtonPressed = false;
+                    stopped = false;
+                }
+    
+                void reset() {
+                    startTime = millis();
+                }
+    
+                void stop() {
+                    startButtonPressed = false;
+                    stopButtonPressed = true;
+                    stopped = true;
+                    heaterTurnOff = true;
+                }
+    
+                void cycleTaperMode() {
+                    taperMode += 1;
+                    if (taperMode > TAPER_MODE_15M) {
+                        taperMode = TAPER_MODE_OFF;
+                    }
+                }
+    
+                String taperModeLabel () {
+                    switch (taperMode) {
+                        case TAPER_MODE_OFF:
+                            return "OFF";
+                            break;
+                        case TAPER_MODE_5M:
+                            return " 5M";
+                            break;
+                        case TAPER_MODE_10M:
+                            return "10M";
+                            break;
+                        case TAPER_MODE_15M:
+                            return "15M";
+                            break;
+                        default:
+                            return "   ";
+                            break;
+                    }
+                }
+    
+                void setup() {
+                    // put your setup code here, to run once:
+                    pinMode(HEATER_RELAY_PIN, OUTPUT);
+    
+                    pinMode(START_BUTTON_PIN, INPUT);
+                    pinMode(RESET_BUTTON_PIN, INPUT);
+                    pinMode(STOP_BUTTON_PIN, INPUT);
+                    pinMode(TAPER_BUTTON_PIN, INPUT);
+    
+                    pinMode(MAX_TIME_POT_PIN, INPUT);
+                    pinMode(MAX_TEMP_POT_PIN, INPUT);
+                    pinMode(OP_RANGE_POT_PIN, INPUT);
+    
+                    pinMode(TEMP_SENSOR_PIN, INPUT);
+                
+                    lcd.init();
+                    lcd.begin(20,4);
+                    lcd.backlight();
+    
+                    stop();
+                }
+                
+                void loop() {
+                    // put your main code here, to run repeatedly:
+                    maxTime = map(analogRead(MAX_TIME_POT_PIN), 0, 1023, 1, maxTimeCap) * 30 * 1000;
+                    maxTemp = map(analogRead(MAX_TEMP_POT_PIN), 0, 1023, 150, 450);
+                    tempThreshold = map(analogRead(OP_RANGE_POT_PIN), 0, 1023, 10, 100);
+                    
+                    byte startButtonState = digitalRead(START_BUTTON_PIN);
+                    if (startButtonState == LOW) {
+                        start();
+                    }
+    
+                    byte resetButtonState = digitalRead(RESET_BUTTON_PIN);
+                    if (resetButtonState == LOW) {
+                        reset();
+                    }
+    
+                    byte stopButtonState = digitalRead(STOP_BUTTON_PIN);
+                    if (stopButtonState == LOW) {
+                        stop();
+                    }
+    
+                    byte taperButtonState = digitalRead(TAPER_BUTTON_PIN);
+                    if (taperButtonState == LOW) {
+                        cycleTaperMode();
+                    }
+    
+                    time = millis() - startTime;
+                    timeExpired = false;
+                
+                    int tempValue = analogRead(TEMP_SENSOR_PIN);
+                    int temp = 1 / (log(1 / (1023. / tempValue - 1)) / BETA + 1.0 / 298.15) - 273.15;
+                
+                    // double temp for testing
+                    temp = temp * 5;
+                
+                    // turn heater off if time is up
+                    if (time > maxTime) {
+                        heaterTurnOff = true;
+                        timeExpired = true;
+                    } else {
+                        // turn heater on if its already off and and the temp is less than the heat threshold
+                        if (heaterCurrentlyOff && temp < (maxTemp - tempThreshold)) {
+                            heaterTurnOff = false;
+                        }
+                    }
+                
+                    // turn heater off if the temperature is greater than the cutoff
+                    if (temp > maxTemp) {
+                        heaterTurnOff = true;
+                        heatExceeded = true;
+                    }
+    
+                    if (stopped) {
+                        heaterTurnOff = true;
+                    }
+                
+                    // switch the heater state if it has changed
+                    if (heaterTurnOff != heaterCurrentlyOff) {
+                        if (heaterTurnOff) {
+                            // send off signal to relay
+                            digitalWrite(HEATER_RELAY_PIN, HIGH);
+                        } else {
+                            // send on signal to relay
+                            digitalWrite(HEATER_RELAY_PIN, LOW);
+                        }
+                    }
+                
+                    heaterCurrentlyOff = heaterTurnOff;
+                
+                    int maxTimeMin = floor((maxTime/1000/60) << 0);
+                    int maxTimeSec = floor((maxTime/1000) % 60);
+                
+                    int min = floor((time/1000/60) << 0);
+                    int sec = floor((time/1000) % 60);
+                
+                    lcd.setCursor(0, 0);
+                    sprintf(buf, "%02dm%02ds %03dc %03dc %03d", maxTimeMin, maxTimeSec, maxTemp, tempThreshold, taperMode);
+                    lcd.println(buf);
+                
+                    lcd.setCursor(0, 1);
+                    if (timeExpired || stopped) {
+                        // quit the program as we are out of time but wait a bit for safety
+                        if (time / 1000 > exitTime && heaterCurrentlyOff) {
+                            exit(0);
+                        }
+    
+                        // display the max time when the time has expired instead of normal
+                        sprintf(buf, "%02dm%02ds %03dc        %s", stopped ? 0 : maxTimeMin, stopped ? 0 : maxTimeSec, temp, (startButtonPressed ? "X" : ""));
+                    } else {
+                        sprintf(buf, "%02dm%02ds %03dc        %s", min, sec, temp, (startButtonPressed ? "X" : " "));
+                    }
+                    lcd.println(buf);
+                
+                    lcd.setCursor(0, 2);
+                    sprintf(buf, "%s       %s", (timeExpired ? "Time expired" : "            "), (resetButtonState == LOW ? "X" : " "));
+                    lcd.println(buf);
+                
+                    lcd.setCursor(0, 3);
+                    sprintf(buf, "Heater: %s        %s", (heaterCurrentlyOff ? "OFF" : "ON "), stopped ? "X" : " ");
+                    lcd.println(buf);
+                
+                    // quit the program as we are out of time but wait a bit for safety
+                    if (timeExpired) {
+                        // divide the time 
+                        if (time / 1000 > exitTime && heaterCurrentlyOff) {
+                            exit(0);
+                        }
+                    }
+                
+                    delay(loopDelay);
+                }
+        </template>
+
+        <template>
+            {
+                "version": 1,
+                "author": "Koepel",
+                "editor": "wokwi",
+                "parts": [
+                  { "type": "wokwi-arduino-uno", "id": "uno", "top": 0, "left": 0, "rotate": 90, "attrs": {} },
+                  { "type": "wokwi-ks2e-m-dc5", "id": "sw1", "top": 23.7, "left": 347.6, "attrs": {} },
+                  { "type": "wokwi-led", "id": "led1", "top": 178.8, "left": 312, "attrs": { "color": "Red" } },
+                  {
+                    "type": "wokwi-resistor",
+                    "id": "r1",
+                    "top": 134.2,
+                    "left": 353,
+                    "rotate": 90,
+                    "attrs": { "value": "10000" }
+                  },
+                  {
+                    "type": "wokwi-resistor",
+                    "id": "r2",
+                    "top": 134.2,
+                    "left": 314.6,
+                    "rotate": 90,
+                    "attrs": { "value": "10000" }
+                  },
+                  {
+                    "type": "wokwi-led",
+                    "id": "led2",
+                    "top": 178.8,
+                    "left": 350.4,
+                    "attrs": { "color": "Green" }
+                  },
+                  { "type": "wokwi-potentiometer", "id": "pot1", "top": 554.92, "left": 47.38, "attrs": {} },
+                  { "type": "wokwi-potentiometer", "id": "pot2", "top": 556.37, "left": 142.41, "attrs": {} },
+                  { "type": "wokwi-potentiometer", "id": "pot3", "top": 556.41, "left": 234.21, "attrs": {} },
+                  {
+                    "type": "wokwi-lcd2004",
+                    "id": "lcd1",
+                    "top": 687.85,
+                    "left": 36.38,
+                    "attrs": { "pins": "i2c" }
+                  },
+                  {
+                    "type": "wokwi-ntc-temperature-sensor",
+                    "id": "ntc1",
+                    "top": -63.11,
+                    "left": -305.94,
+                    "attrs": {}
+                  },
+                  {
+                    "type": "wokwi-pushbutton",
+                    "id": "btn1",
+                    "top": 760.39,
+                    "left": 428.86,
+                    "attrs": { "color": "yellow", "key": "r" }
+                  },
+                  {
+                    "type": "wokwi-resistor",
+                    "id": "r3",
+                    "top": 457.32,
+                    "left": 375.24,
+                    "rotate": 270,
+                    "attrs": { "value": "10000" }
+                  },
+                  {
+                    "type": "wokwi-pushbutton",
+                    "id": "btn2",
+                    "top": 694.97,
+                    "left": 429.23,
+                    "attrs": { "color": "green" }
+                  },
+                  {
+                    "type": "wokwi-resistor",
+                    "id": "r4",
+                    "top": 550.06,
+                    "left": 367.1,
+                    "rotate": 270,
+                    "attrs": { "value": "1000" }
+                  },
+                  {
+                    "type": "wokwi-resistor",
+                    "id": "r5",
+                    "top": 526.57,
+                    "left": 392.39,
+                    "rotate": 270,
+                    "attrs": { "value": "1000" }
+                  },
+                  {
+                    "type": "wokwi-pushbutton",
+                    "id": "btn3",
+                    "top": 826.05,
+                    "left": 429.43,
+                    "attrs": { "color": "red" }
+                  },
+                  {
+                    "type": "wokwi-pushbutton",
+                    "id": "btn4",
+                    "top": 570.74,
+                    "left": 324.23,
+                    "rotate": 270,
+                    "attrs": { "color": "blue" }
+                  },
+                  {
+                    "type": "wokwi-resistor",
+                    "id": "r6",
+                    "top": 650.84,
+                    "left": 266.46,
+                    "rotate": 180,
+                    "attrs": { "value": "1000" }
+                  }
+                ],
+                "connections": [
+                  [ "uno:GND.3", "led1:C", "black", [ "h-30.3", "v122.8", "h19.2" ] ],
+                  [ "uno:GND.3", "led2:C", "black", [ "h-30.3", "v122.8", "h393.6" ] ],
+                  [ "uno:13", "sw1:COIL1", "Purple", [ "h0" ] ],
+                  [ "r2:2", "led1:A", "Gray", [ "h0", "v65.8", "h-9.6" ] ],
+                  [ "r1:2", "led2:A", "Gray", [ "h0", "v65.8", "h-9.6" ] ],
+                  [ "uno:5V", "sw1:P1", "red", [ "h-30.3", "v-184.6", "h307.2", "v134.4", "h57.6" ] ],
+                  [ "uno:GND.3", "sw1:COIL2", "black", [ "h-30.3", "v122.8", "h422.4", "v-259.2", "h-19.2" ] ],
+                  [ "sw1:NO1", "r2:1", "Gray", [ "v49.2", "h-19.2" ] ],
+                  [ "sw1:NC1", "r1:1", "Gray", [ "v49.2", "h29.85" ] ],
+                  [ "pot1:SIG", "uno:A0", "green", [ "v41.84", "h-212.39", "v-498.41", "h177.51" ] ],
+                  [ "pot1:GND", "uno:GND.3", "black", [ "v29.16", "h-157.86", "v-659.04" ] ],
+                  [ "pot1:VCC", "uno:5V", "red", [ "v48.4", "h-235.23", "v-544.82" ] ],
+                  [ "pot2:SIG", "uno:A1", "green", [ "v45.64", "h-237.54", "v-486.01" ] ],
+                  [ "pot2:GND", "uno:GND.3", "black", [ "v36.45", "h-268.53", "v-515.32" ] ],
+                  [ "pot2:VCC", "uno:5V", "red", [ "v52.2", "h-315.72", "v-550.07" ] ],
+                  [ "pot3:GND", "uno:GND.3", "black", [ "v15.4", "h-345.25", "v-493" ] ],
+                  [ "pot3:VCC", "uno:5V", "red", [ "v27.21", "h-387.42", "v-523.81" ] ],
+                  [ "uno:A5", "lcd1:SCL", "#8f4814", [ "h-55.29", "v267.88" ] ],
+                  [ "uno:A4", "lcd1:SDA", "magenta", [ "h-58.83", "v265.61" ] ],
+                  [ "uno:5V", "lcd1:VCC", "red", [ "h-94.16", "v335.12" ] ],
+                  [ "ntc1:GND", "uno:GND.3", "black", [ "h98.33", "v182.79" ] ],
+                  [ "ntc1:OUT", "uno:A3", "green", [ "h85.62", "v228.87" ] ],
+                  [ "ntc1:VCC", "uno:5V", "red", [ "h151.25", "v152.21" ] ],
+                  [ "uno:GND.3", "btn1:2.l", "black", [ "h-150.2", "v355.77", "h531.56" ] ],
+                  [ "btn1:1.l", "r3:1", "red", [ "h0" ] ],
+                  [ "r3:2", "uno:5V", "red", [ "v-1.3", "h-428.3", "v-310.02" ] ],
+                  [ "uno:4", "btn1:1.r", "green", [ "h20.54", "v212.67", "h251.5", "v372.22" ] ],
+                  [ "btn2:1.r", "uno:3", "green", [ "v-7.76", "h21.16", "v-281.61", "h-253.46", "v-220.6" ] ],
+                  [ "btn2:2.l", "uno:GND.3", "black", [ "h-20.96", "v-584.97" ] ],
+                  [ "btn2:1.l", "r4:1", "red", [ "h0" ] ],
+                  [ "r4:2", "uno:5V", "red", [ "h-386.64", "v-320.91" ] ],
+                  [ "btn3:1.l", "r5:1", "red", [ "h0" ] ],
+                  [ "btn3:2.l", "uno:GND.3", "black", [ "h-20.64", "v-557.42", "h-282.69", "v-158.63" ] ],
+                  [ "btn3:1.r", "uno:5", "green", [ "h33.87", "v-455.32", "h-258.33", "v-204.73" ] ],
+                  [ "lcd1:GND", "uno:GND.3", "black", [ "h-99.7", "v-607.36" ] ],
+                  [ "pot3:SIG", "uno:A2", "green", [ "v21.96", "h-367.29", "v-451.56" ] ],
+                  [ "btn4:1.l", "r6:1", "red", [ "v0" ] ],
+                  [ "r6:2", "uno:5V", "red", [ "v1.1", "h-382.23", "v-536.94" ] ],
+                  [ "btn4:2.l", "uno:GND.3", "black", [ "v56.4", "h-450.05", "v-538.32" ] ],
+                  [ "btn4:1.r", "uno:2", "green", [ "h-23.14", "v-142.93", "h-37.55", "v-217.81" ] ],
+                  [ "r5:2", "uno:5V", "red", [ "h-413.27", "v-315.59" ] ]
+                ]
+              }
+        </template>
+
+    </body>
+</html>
